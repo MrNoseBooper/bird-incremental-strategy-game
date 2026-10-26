@@ -9,6 +9,8 @@ from api import catalog
 
 EFFECTS = {"aura", "flock", "chain", "space", "rivals", "mate"}  # the types public/rules.js understands
 SHAPES = {"ring", "cross", "plus2", "area2", "line"}
+GOALS = {"place", "rate", "flock", "stat", "size", "grown"}
+STATS = {"taps", "caught", "hatched"}
 
 
 class CatalogTest(unittest.TestCase):
@@ -27,6 +29,17 @@ class CatalogTest(unittest.TestCase):
                 if e["type"] == "aura":
                     self.assertIn(e["shape"], SHAPES)
                     self.assertTrue(e["target"] in ("birds", "others") or set(e["target"]) <= set(ids), e)
+
+    def test_goals_are_well_formed(self):
+        ids = {p["id"] for p in catalog.CATALOG["pieces"]}
+        for g in catalog.CATALOG["goals"]:
+            self.assertIn(g["type"], GOALS, g)
+            self.assertGreater(g["need"], 0, g)
+            self.assertTrue(g["reward"].get("seeds", 0) > 0 or g["reward"].get("feathers", 0) > 0, g)
+            if "id" in g:
+                self.assertIn(g["id"], ids, g)
+            if g["type"] == "stat":
+                self.assertIn(g["stat"], STATS, g)
 
     def test_endpoint_serves_the_catalog_as_json(self):
         server = HTTPServer(("127.0.0.1", 0), catalog.handler)

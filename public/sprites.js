@@ -130,6 +130,8 @@ const POSE = {
   eat: { head: 'eat' },
   gulp: { head: 'gulp', hy: -1 },
   crest: { crest: 'up' },
+  flyA: { wing: 'up', legs: 'tucked' },
+  flyB: { wing: 'down', legs: 'tucked' },
 };
 
 function compose(pose, palette) {
@@ -183,6 +185,11 @@ const PALETTES = {
     R: '#b48f7a', H: '#b48f7a', A: '#b5583b', M: '#151214', E: '#efe6da', S: '#c48b70', C: '#151214', K: '#1d1a1c',
     B: '#a6897a', D: '#c09f8c', L: '#a8a2ab', U: '#a5452d', W: '#6c6a74', w: '#2a282f', X: '#e3262d', Z: '#f4efe2',
     T: '#4f4c56', Y: '#f2c522', Q: '#d9362b', 1: '#3b3539',
+  }),
+  goldwax: bird({ // the rare visitor
+    R: '#f6d465', H: '#f6d465', A: '#f39b2f', M: '#5a3510', E: '#fffbe8', S: '#fbe08a', C: '#5a3510', K: '#5a3510',
+    B: '#f1c040', D: '#fbe08a', L: '#fff0b0', U: '#f39b2f', W: '#e3a82b', w: '#a86f14', X: '#ff5a3a', Z: '#fffbe8',
+    T: '#c98a1a', Y: '#fff6c8', 1: '#a86f14',
   }),
 };
 
@@ -421,8 +428,11 @@ export const SPRITES = {
     palette: { R: '#9b4b33', r: '#6d3122', W: '#c8955a', w: '#946a3a', H: '#3a2618', Q: '#f2c522', q: '#fff1a8', 1: '#6b5a4a', 2: '#8a7562' },
     frames: { idle: NEST, glow: NEST.map((r, i) => ({ 8: '.....WHqQHW.....', 9: '.....WWQQWW.....' })[i] ?? r) },
   },
+  goldwax: songbird('goldwax', {}),
   // tiny flat sprites for effects and the UI
   note: { palette: { 1: OUTLINE }, frames: { idle: ['..11', '..1.', '..1.', '111.', '11..'] } },
+  heart: { palette: { 1: '#ff5d7a', 2: '#ffc2cf' }, frames: { idle: ['.1.1.', '12111', '.111.', '..1..'] } },
+  pip: { palette: { 1: '#b8893f', 2: '#f1dca2' }, frames: { idle: ['21', '11'] } },
   spark: { palette: { 1: '#f2c522', 2: '#ffffff' }, frames: { idle: ['.1.', '121', '.1.'] } },
   berry: { palette: { 1: '#d9362b', 2: '#ff8a7a' }, frames: { idle: ['21', '11'] } },
   feather: {

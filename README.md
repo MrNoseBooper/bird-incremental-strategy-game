@@ -8,7 +8,7 @@ upgrades.
 ## Play locally
 
 ```
-python dev_server.py        # then open http://127.0.0.1:8000
+python run.py               # then open http://127.0.0.1:8000
 ```
 
 No dependencies: Python 3.9+ standard library only. The dev server mirrors Vercel's routing (static `public/` plus `/api`).
@@ -35,7 +35,7 @@ Import the repository in Vercel (no build step or settings needed), or run `verc
 | `public/rules.js` | How bonuses combine: production, purchases, offline progress, save validation. |
 | `public/sprites.js` | Pixel art and animation clips (every pose is its own frame). |
 | `public/game.js` | Drawing, input, shop and info panels, autosave. |
-| `dev_server.py` | Local server for development. |
+| `run.py` | Local server for development. |
 
 ## Saving
 

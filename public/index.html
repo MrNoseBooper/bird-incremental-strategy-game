@@ -24,14 +24,16 @@
       <div class="wallet gold" title="Golden Feathers: rare, hatched from Nest Boxes">
         <img data-icon="feathers" alt="Golden Feathers"><b id="feathers">0</b><small id="next"></small>
       </div>
+      <button type="button" id="mute" aria-pressed="true">Sound: on</button>
     </div>
   </header>
 
   <main>
     <section id="field">
+      <div id="goal" class="bar"></div>
       <div id="placing" class="bar" hidden>Placing <b></b>: tap a tile. <button type="button" id="stop">Done</button></div>
       <div id="grove-wrap">
-        <canvas id="grove" tabindex="0" aria-label="Your grove. Arrow keys move the cursor, Enter places, selects, or moves the selected piece."></canvas>
+        <canvas id="grove" tabindex="0" aria-label="Your grove. Arrow keys move the cursor, Enter places, selects, or moves the selected piece. C catches the Golden Waxwing."></canvas>
         <div id="tip" hidden></div>
       </div>
       <p id="boot">Waking the birds…</p>
@@ -59,8 +61,11 @@
           <li>Bohemian waxwings chain into great flocks and feast on fruiting rowan trees.</li>
         </ul>
         <p>Feeders, sunflowers and birdbaths boost birds near them. Pick something in the shop, then hover the grove: highlighted tiles show its reach, and the label shows the gain.</p>
+        <p><b>Tap your birds</b> to say hello. Each one shakes loose a few seconds of its seeds, once every few seconds.</p>
+        <p>Watch the sky for the <b>Golden Waxwing</b>. Catch it as it flies by for a seed shower, a Frenzy (triple seeds for a while) or even a Golden Feather.</p>
         <p><b>Golden Feathers</b> are rare. They hatch from Nest Boxes kept warm by the birds around them. Spend them in the Golden shop on a bigger grove and powerful upgrades.</p>
-        <p>Drag pieces to rearrange them for free. Keyboard: arrow keys move the cursor, Enter places, selects or moves, Esc cancels. Your grove saves automatically.</p>
+        <p>Follow the goals above the grove for extra rewards.</p>
+        <p>Drag pieces to rearrange them for free. Keyboard: arrow keys move the cursor, Enter places, selects or moves, C catches the Golden Waxwing, Esc cancels. Your grove saves automatically.</p>
       </details>
     </aside>
   </main>

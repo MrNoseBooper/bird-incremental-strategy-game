@@ -24,6 +24,7 @@ export function prepare(cat) {
 export const newState = cat => ({
   seeds: cat.start.seeds, earned: 0, feathers: 0,
   cells: Array(cat.maxSize ** 2).fill(null), treats: {}, upgrades: {}, savedAt: 0,
+  frenzy: 0, goal: 0, stats: { taps: 0, caught: 0, hatched: 0 },
 });
 
 const bonus = (s, cat, effect) =>
@@ -60,10 +61,18 @@ function groupSizes(cells, N, at) {
   return size;
 }
 
+// Lookup for the open grove: undefined off-grid or in the thicket, null for an empty tile.
+function cellAt(s, cat) {
+  const N = cat.maxSize, size = gridSize(s, cat);
+  return (x, y) => (x >= 0 && y >= 0 && x < size && y < size ? s.cells[y * N + x] : undefined);
+}
+
+export const largestFlock = (s, cat, id) =>
+  Math.max(0, ...groupSizes(s.cells, cat.maxSize, cellAt(s, cat)).filter((n, i) => s.cells[i]?.id === id));
+
 // Seeds per second for every cell, with a labelled breakdown of where each bird's bonuses come from.
 export function evaluate(s, cat) {
-  const N = cat.maxSize, size = gridSize(s, cat), cells = s.cells;
-  const at = (x, y) => (x >= 0 && y >= 0 && x < size && y < size ? cells[y * N + x] : undefined);
+  const N = cat.maxSize, cells = s.cells, at = cellAt(s, cat);
   const isBird = c => !!c && cat.piece[c.id].kind === 'bird';
   const out = cells.map(() => ({ rate: 0, mult: 1, parts: {}, egg: 0 }));
   const add = (i, label, amount) => {
@@ -89,7 +98,7 @@ export function evaluate(s, cat) {
     }
     if (p.incubate) out[i].egg = (count('ring', isBird) / 8 / p.incubate) * (1 + bonus(s, cat, 'incubate'));
   });
-  const seedMult = 1 + bonus(s, cat, 'seeds');
+  const seedMult = (1 + bonus(s, cat, 'seeds')) * (s.frenzy > 0 ? cat.frenzy.mult : 1);
   let total = 0;
   cells.forEach((c, i) => {
     if (!isBird(c)) return;
@@ -106,6 +115,7 @@ export function step(s, cat, dt) {
   const { total, cells } = evaluate(s, cat), hatched = [];
   s.seeds += total * dt;
   s.earned += total * dt;
+  s.frenzy = Math.max(0, s.frenzy - dt);
   s.cells.forEach((c, i) => {
     const p = c && cat.piece[c.id];
     if (p?.grow) c.age = Math.min(p.grow, (c.age || 0) + dt);
@@ -113,6 +123,7 @@ export function step(s, cat, dt) {
       c.egg = (c.egg || 0) + cells[i].egg * dt;
       for (; c.egg >= 1; c.egg--) {
         s.feathers++;
+        s.stats.hatched++;
         hatched.push(i);
       }
     }
@@ -123,8 +134,68 @@ export function step(s, cat, dt) {
 // Long gaps (offline time) run in chunks so trees that mature part-way through still count.
 export function advance(s, cat, seconds) {
   const hatched = [];
-  for (let left = seconds; left > 0; left -= 10) hatched.push(...step(s, cat, Math.min(left, 10)));
+  for (let left = seconds; left > 0;) {
+    const dt = Math.min(left, 10, s.frenzy > 0 ? s.frenzy : Infinity); // split exactly where a frenzy ends
+    hatched.push(...step(s, cat, dt));
+    left -= dt;
+  }
   return hatched;
+}
+
+// Tapping a bird shakes loose a few seconds of its seeds (the per-bird cooldown is the game's pacing).
+export function tap(s, cat, i) {
+  const c = s.cells[i];
+  if (!c || cat.piece[c.id].kind !== 'bird') return 0;
+  const gain = Math.max(cat.tap.min, evaluate(s, cat).cells[i].rate * cat.tap.seconds);
+  s.seeds += gain;
+  s.earned += gain;
+  s.stats.taps++;
+  return gain;
+}
+
+// Catching the Golden Waxwing: `roll` in [0, 1) picks a reward by weight.
+export function catchVisitor(s, cat, roll) {
+  const list = cat.visitor.rewards;
+  let r = roll * list.reduce((sum, x) => sum + x.weight, 0);
+  const reward = list.find(x => (r -= x.weight) < 0) || list[list.length - 1];
+  s.stats.caught++;
+  if (reward.kind === 'frenzy') {
+    s.frenzy = cat.frenzy.seconds;
+    return { kind: 'frenzy', amount: cat.frenzy.mult };
+  }
+  if (reward.kind === 'feather') {
+    s.feathers++;
+    return { kind: 'feather', amount: 1 };
+  }
+  const gain = Math.max(reward.min, evaluate(s, cat).total * reward.seconds);
+  s.seeds += gain;
+  s.earned += gain;
+  return { kind: 'seeds', amount: gain };
+}
+
+// [have, need] for the current goal, or null once every goal is done.
+export function goalProgress(s, cat, ev) {
+  const g = cat.goals[s.goal];
+  if (!g) return null;
+  const have = {
+    place: () => owned(s, g.id),
+    rate: () => ev.total,
+    flock: () => largestFlock(s, cat, g.id),
+    stat: () => s.stats[g.stat],
+    size: () => gridSize(s, cat),
+    grown: () => s.cells.filter(c => c?.id === g.id && c.age >= cat.piece[g.id].grow).length,
+  }[g.type]();
+  return [have, g.need];
+}
+
+// Pay out and move on if the current goal is met; returns the finished goal.
+export function claimGoal(s, cat, ev) {
+  const p = goalProgress(s, cat, ev);
+  if (!p || p[0] < p[1]) return null;
+  const g = cat.goals[s.goal++];
+  s.seeds += g.reward.seeds || 0;
+  s.feathers += g.reward.feathers || 0;
+  return g;
 }
 
 export function buy(s, cat, id, i) {
@@ -178,8 +249,8 @@ export function gainIf(s, cat, change) {
 export function toSave(s, cat) {
   const N = cat.maxSize;
   const pieces = s.cells.flatMap((c, i) => (c ? [{ ...c, x: i % N, y: Math.floor(i / N) }] : []));
-  const { seeds, earned, feathers, treats, upgrades, savedAt } = s;
-  return { seeds, earned, feathers, treats, upgrades, savedAt, pieces };
+  const { seeds, earned, feathers, treats, upgrades, savedAt, frenzy, goal, stats } = s;
+  return { seeds, earned, feathers, treats, upgrades, savedAt, frenzy, goal, stats, pieces };
 }
 
 // Saves come from the player's browser storage, so rebuild the state field by field and drop anything odd.
@@ -191,6 +262,9 @@ export function fromSave(data, cat) {
   s.earned = num(data.earned);
   s.feathers = num(data.feathers);
   s.savedAt = num(data.savedAt);
+  s.frenzy = Math.min(num(data.frenzy), cat.frenzy.seconds);
+  s.goal = Math.min(Math.floor(num(data.goal)), cat.goals.length);
+  for (const k in s.stats) s.stats[k] = Math.floor(num(data.stats?.[k]));
   for (const p of cat.pieces) if (p.kind === 'bird' && data.treats?.[p.id]) s.treats[p.id] = Math.floor(num(data.treats[p.id]));
   for (const u of cat.upgrades) {
     if (data.upgrades?.[u.id]) s.upgrades[u.id] = Math.min(Math.floor(num(data.upgrades[u.id])), u.costs?.length ?? Infinity);

@@ -8,6 +8,9 @@ const CATALOG_KEY = 'waxwing-grove-catalog';
 const MARGIN = 6; // art pixels of hedge around the grid, so hopping birds aren't clipped
 const ICON_FRAME = { sunflower: 'b', bath: 'a', rowan: 'fruit' };
 const CURRENCY = { seeds: 'seeds', feathers: 'Golden Feathers' };
+const MUTE_KEY = 'waxwing-grove-muted';
+const DAY = 480; // seconds for one day/night cycle
+const FLY = 0.7; // seconds a newly bought bird takes to swoop in
 const $ = sel => document.querySelector(sel);
 
 async function loadCatalog() {
@@ -42,8 +45,12 @@ const iconUrl = Object.fromEntries(cat.pieces.map(p => [p.id, art[p.id][ICON_FRA
 const view = $('#grove'), ctx = view.getContext('2d');
 const mascot = { id: 'waxwing' }, mascotCtx = $('#mascot').getContext('2d');
 const anims = new WeakMap(), ghosts = {}, particles = [];
+const butterflies = ['#f4efe2', '#f2a03a', '#8fc3f0'].map(color => ({ color, x: Math.random() * SIDE, y: Math.random() * SIDE, tx: SIDE / 2, ty: SIDE / 2, t: 0 }));
+const fireflies = Array.from({ length: 12 }, () => ({ x: Math.random() * SIDE, y: Math.random() * SIDE, t: Math.random() * 9 }));
 let state = load(), last = state.savedAt || Date.now(), lastUi = 0;
 let tab = 'birds', placing = null, selected = null, hover = null, drag = null, ground = null, groundSize = 0, saveFailed = false;
+let visitor = null, visitorAt = Date.now() + 30e3, goalHtml = '', audio = null, muted = false;
+try { muted = localStorage.getItem(MUTE_KEY) === '1'; } catch {}
 
 function buildArt() {
   const out = {};
@@ -130,7 +137,7 @@ function paintGround(size) {
 }
 
 function animOf(c) {
-  if (!anims.has(c)) anims.set(c, { clip: null, k: 0, t: 0, wait: Math.random() * 3, ox: 0 });
+  if (!anims.has(c)) anims.set(c, { clip: null, k: 0, t: 0, wait: Math.random() * 2, ox: 0 });
   return anims.get(c);
 }
 
@@ -139,18 +146,20 @@ function frameOf(c) {
   if (def.stages) return [def.stages[Math.floor(Math.min(1, (c.age || 0) / p.grow) * (def.stages.length - 1))], 0];
   if (p.incubate) return [(c.egg || 0) >= 0.8 ? 'glow' : 'idle', 0];
   if (def.loop) return [def.loop[a.k][0], 0];
+  if (a.fly) return [Math.floor(a.fly.t * 12) % 2 ? 'flyA' : 'flyB', 0];
   return a.clip ? [a.clip[a.k][0], a.clip[a.k][2] || 0] : ['idle', 0];
 }
 
 function drawPiece(c, i, alpha = 1) {
   const [x, y] = tileXY(i), a = animOf(c), [frame, dy] = frameOf(c);
+  const k = a.fly ? (1 - a.fly.t / FLY) ** 2 : 0; // eases the swoop-in down to the tile
   ctx.globalAlpha = alpha;
-  if (SPRITES[c.id].habits) { // soft shadow, smaller mid-hop
-    const w = dy ? 6 : 10;
+  if (SPRITES[c.id].habits) { // soft shadow, smaller mid-hop or mid-flight
+    const w = dy || a.fly ? 6 : 10;
     ctx.fillStyle = 'rgba(25, 45, 20, 0.3)';
     ctx.fillRect(x + a.ox + 8 - w / 2, y + 14, w, 2);
   }
-  ctx.drawImage(art[c.id][frame], x - 1 + a.ox, y - 1 + dy);
+  ctx.drawImage(art[c.id][frame], Math.round(x - 1 + a.ox + (a.fly?.dx || 0) * k), Math.round(y - 1 + dy + (a.fly?.dy || 0) * k));
   if (cat.piece[c.id].incubate) { // warmth gauge beside the nest box
     const h = Math.round((c.egg || 0) * 10);
     ctx.fillStyle = '#3a2618';
@@ -201,12 +210,148 @@ function render(dt) {
   if (focus) for (const [j, amount] of auraTiles(focus.id, focus.at)) shade(j, amount > 0 ? 'rgba(255, 236, 140, 0.4)' : 'rgba(220, 50, 40, 0.35)');
   state.cells.forEach((c, i) => c && !(drag?.moved && drag.from === i) && drawPiece(c, i));
   if (ghost) drawPiece(ghost.cell, ghost.at, 0.65);
+  const night = nightness();
+  if (night < 0.5) for (const b of butterflies) drawButterfly(b, dt);
+  if (visitor) ctx.drawImage(art.goldwax[Math.floor(visitor.t * 10) % 2 ? 'flyA' : 'flyB'], Math.round(visitor.x) - 1, Math.round(visitor.y) - 1);
+  if (state.frenzy > 0 && Math.random() < dt * 10) sparkle(Math.floor(Math.random() * N * N));
   drawParticles(dt);
+  if (night > 0) {
+    ctx.fillStyle = `rgba(18, 22, 64, ${0.4 * night})`;
+    ctx.fillRect(0, 0, SIDE, SIDE);
+    drawFireflies(dt, night);
+  }
   if (hover != null) corners(hover, placing && !ghost ? '#ff6b5a' : '#fff6d8');
   if (selected != null) corners(selected, '#f2c522');
   const [frame, dy] = frameOf(mascot);
   mascotCtx.clearRect(0, 0, 18, 21);
   mascotCtx.drawImage(art.waxwing[frame], 0, 3 + dy);
+}
+
+// 0 by day, rising to 1 at midnight; day comes first after every page load.
+const nightness = () => Math.max(0, Math.min(1, (0.5 - 0.5 * Math.cos((2 * Math.PI * performance.now()) / 1000 / DAY)) * 1.6 - 0.6));
+
+function drawButterfly(b, dt) {
+  b.t += dt;
+  const dx = b.tx - b.x, dy = b.ty - b.y, d = Math.hypot(dx, dy);
+  if (d < 2) [b.tx, b.ty] = [Math.random() * SIDE, Math.random() * SIDE];
+  else {
+    b.x += (dx / d) * 10 * dt;
+    b.y += (dy / d) * 10 * dt + Math.sin(b.t * 6) * 8 * dt;
+  }
+  const x = Math.round(b.x), y = Math.round(b.y), shut = Math.floor(b.t * 9) % 2; // two-frame wing flutter
+  ctx.fillStyle = b.color;
+  ctx.fillRect(x - 2 + shut, y - 1, 2 - shut, 2);
+  ctx.fillRect(x + 1, y - 1, 2 - shut, 2);
+  ctx.fillStyle = '#2a1f2d';
+  ctx.fillRect(x, y - 1, 1, 2);
+}
+
+function drawFireflies(dt, night) {
+  for (const f of fireflies.slice(0, Math.round(night * fireflies.length))) {
+    f.t += dt;
+    f.x = (f.x + Math.sin(f.t * 0.7) * 4 * dt + SIDE) % SIDE;
+    f.y = (f.y + Math.cos(f.t * 0.9) * 4 * dt + SIDE) % SIDE;
+    if (Math.sin(f.t * 2.3) < 0) continue; // blinking off
+    const x = Math.round(f.x), y = Math.round(f.y);
+    ctx.fillStyle = 'rgba(220, 255, 120, 0.35)';
+    ctx.fillRect(x - 1, y - 1, 3, 3);
+    ctx.fillStyle = '#f4ffa8';
+    ctx.fillRect(x, y, 1, 1);
+  }
+}
+
+// ---------- the Golden Waxwing visitor ----------
+
+function tickVisitor(dt) {
+  if (!visitor && Date.now() >= visitorAt) {
+    visitor = { t: 0, x: -18, y: 0, y0: MARGIN + 4 + Math.random() * (SIDE - 40) };
+    sound('gold');
+    if (!state.stats.caught) toast('A Golden Waxwing is flying by. Tap it before it leaves!');
+  }
+  if (!visitor) return;
+  visitor.t += dt;
+  const k = visitor.t / cat.visitor.stay;
+  visitor.x = -18 + (SIDE + 20) * k;
+  visitor.y = visitor.y0 + Math.sin(visitor.t * 2.4) * 5;
+  if (Math.random() < dt * 10) {
+    const sx = visitor.x + 2, sy = visitor.y + 8 + Math.random() * 4;
+    spawn(art.spark.idle, 0.5, () => [sx, sy], true);
+  }
+  if (k >= 1) visitorLeaves();
+}
+
+function visitorLeaves() {
+  const [lo, hi] = cat.visitor.every;
+  visitor = null;
+  visitorAt = Date.now() + (lo + Math.random() * (hi - lo)) * 1000;
+}
+
+function overVisitor(e) {
+  if (!visitor) return false;
+  const r = view.getBoundingClientRect(), x = ((e.clientX - r.left) / r.width) * SIDE, y = ((e.clientY - r.top) / r.height) * SIDE;
+  return Math.abs(x - visitor.x - 8) < 13 && Math.abs(y - visitor.y - 8) < 13; // generous: it's a moving target
+}
+
+function catchVisitor() {
+  const { x, y } = visitor, reward = R.catchVisitor(state, cat, Math.random());
+  visitorLeaves();
+  for (let k = 0; k < 12; k++) {
+    const a = (k / 12) * 2 * Math.PI;
+    spawn(art.spark.idle, 0.7, t => [x + 7 + Math.cos(a) * 14 * t, y + 7 + Math.sin(a) * 14 * t], true);
+  }
+  sound('catch');
+  const text = reward.kind === 'seeds' ? `+${fmt(reward.amount)} seeds`
+    : reward.kind === 'frenzy' ? `Frenzy! ×${reward.amount} seeds for ${cat.frenzy.seconds}s` : '+1 Golden Feather';
+  floatAt(x + 8, y, text);
+  toast(`You caught the Golden Waxwing: ${text}!`);
+}
+
+// ---------- sound: tiny synthesized tones, no audio files ----------
+
+const SOUNDS = {
+  chirp: (tone, p) => { tone(2400 * p, 3600 * p, 0, 0.06); tone(3200 * p, 2400 * p, 0.08, 0.07); },
+  trill: (tone, p) => [0, 0.05, 0.1, 0.15, 0.2].forEach(at => tone(4600 * p, 5600 * p, at, 0.035, 0.035)), // waxwings: thin, high
+  hoot: tone => { tone(440, 380, 0, 0.22, 0.09); tone(420, 340, 0.3, 0.32, 0.09); },
+  sing: (tone, p) => tone(3000 * p, 3600 * p, 0, 0.05, 0.012),
+  buy: tone => { tone(520, 700, 0, 0.07, 0.05, 'triangle'); tone(780, 1040, 0.07, 0.09, 0.05, 'triangle'); },
+  nope: tone => tone(220, 160, 0, 0.12, 0.06, 'triangle'),
+  gold: tone => [0, 1, 2, 3].forEach(k => tone(1320 * 1.26 ** k, 1320 * 1.26 ** k, k * 0.07, 0.14, 0.04, 'triangle')),
+  catch: tone => [523, 659, 784, 1047, 1319].forEach((f, k) => tone(f, f, k * 0.06, 0.16, 0.06, 'triangle')),
+  goal: tone => [392, 523, 659, 784].forEach((f, k) => tone(f, f, k * 0.1, 0.2, 0.07, 'triangle')),
+};
+
+// Browsers only allow audio after the player taps or presses a key, so the context is made then.
+function unlockAudio() {
+  try {
+    audio ||= new AudioContext();
+  } catch {
+    return; // no Web Audio here: stay silent
+  }
+  if (audio.state === 'suspended') audio.resume();
+}
+
+function sound(kind) {
+  if (muted || audio?.state !== 'running') return;
+  const t0 = audio.currentTime;
+  SOUNDS[kind]((from, to, at, len, vol = 0.06, type = 'sine') => {
+    const o = audio.createOscillator(), g = audio.createGain();
+    o.type = type;
+    o.frequency.setValueAtTime(from, t0 + at);
+    o.frequency.exponentialRampToValueAtTime(to, t0 + at + len);
+    g.gain.setValueAtTime(0.0001, t0 + at);
+    g.gain.exponentialRampToValueAtTime(vol, t0 + at + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + at + len);
+    o.connect(g).connect(audio.destination);
+    o.start(t0 + at);
+    o.stop(t0 + at + len + 0.05);
+  }, 0.9 + Math.random() * 0.2);
+}
+
+function setMuted(on) {
+  muted = on;
+  $('#mute').textContent = on ? 'Sound: off' : 'Sound: on';
+  $('#mute').setAttribute('aria-pressed', String(!on));
+  try { localStorage.setItem(MUTE_KEY, on ? '1' : '0'); } catch {}
 }
 
 // ---------- animation and effects ----------
@@ -230,7 +375,10 @@ function play(c, i, name) {
     if (mates.length) passBerry(i, mates[Math.floor(Math.random() * mates.length)]);
     else name = 'eat';
   }
-  if (name === 'sing' && i >= 0) note(i);
+  if (name === 'sing' && i >= 0) {
+    note(i);
+    if (Math.random() < 0.3) sound('sing');
+  }
   if (name === 'hop') a.ox = Math.max(-2, Math.min(2, a.ox + (Math.random() < 0.5 ? -1 : 1)));
   Object.assign(a, { clip: SPRITES[c.id].clips[name], k: 0, t: 0 });
 }
@@ -242,10 +390,19 @@ function tickAnim(c, i, dt) {
   } else if (a.clip) {
     for (a.t += dt; a.clip && a.t >= a.clip[a.k][1];) {
       a.t -= a.clip[a.k][1];
-      if (++a.k === a.clip.length) Object.assign(a, { clip: null, k: 0, t: 0, wait: 1 + Math.random() * 4 });
+      if (++a.k === a.clip.length) Object.assign(a, { clip: null, k: 0, t: 0, wait: 0.6 + Math.random() * 2.6 });
     }
   } else if (def.habits && (a.wait -= dt) <= 0) play(c, i, pick(def.habits));
+  if (a.fly && (a.fly.t += dt) >= FLY) {
+    a.fly = null;
+    play(c, i, 'flap');
+  }
   if (i >= 0 && p.kind === 'item' && p.currency === 'feathers' && Math.random() < dt * 1.2) sparkle(i);
+  if (i >= 0 && p.rate > 0 && (a.pop = (a.pop ?? Math.random() * 4) - dt) <= 0) { // a seed pops up as the bird earns
+    const [x, y] = tileXY(i), ox = a.ox;
+    a.pop = 2.5 + Math.random() * 3;
+    spawn(art.pip.idle, 0.9, t => [x + 7 + ox, y + 1 - 8 * t], true);
+  }
 }
 
 const spawn = (img, life, path, fade, done) => particles.push({ img, life, path, fade, done, t: 0 });
@@ -285,6 +442,7 @@ function hatch(i) {
   const [x, y] = tileXY(i);
   spawn(art.feather.idle, 1.8, k => [x + 4, y - 14 * k], true);
   floatText(i, '+1 Golden Feather');
+  sound('gold');
 }
 
 // ---------- text helpers ----------
@@ -307,17 +465,33 @@ function toast(text) {
   setTimeout(() => t.remove(), 4500);
 }
 
-function floatText(i, text) {
-  const [x, y] = tileXY(i), k = view.clientWidth / SIDE, f = document.createElement('div');
+// Rising text over the grove at art-pixel position (x, y).
+function floatAt(x, y, text) {
+  const k = view.clientWidth / SIDE, f = document.createElement('div');
   f.className = 'float';
   f.textContent = text;
-  f.style.left = `${(x + TILE / 2) * k}px`;
+  f.style.left = `${x * k}px`;
   f.style.top = `${y * k}px`;
   $('#grove-wrap').append(f);
   setTimeout(() => f.remove(), 1800);
 }
 
-const broke = wallet => toast(`Not enough ${CURRENCY[wallet]}.`);
+function floatText(i, text) {
+  const [x, y] = tileXY(i);
+  floatAt(x + TILE / 2, y, text);
+}
+
+const rewardText = r => [r.seeds && `+${fmt(r.seeds)} seeds`, r.feathers && `+${r.feathers} Golden Feather${r.feathers > 1 ? 's' : ''}`].filter(Boolean).join(' ');
+
+function bought(text) {
+  sound('buy');
+  toast(text);
+}
+
+function broke(wallet) {
+  sound('nope');
+  toast(`Not enough ${CURRENCY[wallet]}.`);
+}
 const overgrown = () => toast('That corner is still thicket. Clear it with Golden Feathers in the Golden shop.');
 
 // ---------- shop, info panel and HUD ----------
@@ -336,7 +510,7 @@ function entries() {
       return {
         icon: iconUrl[p.id], name: p.treat, desc: `×${cat.treat.mult} seeds from every ${p.name}.`, wallet: 'seeds',
         cost: R.treatPrice(cat, p, level), note: `Lv ${level}`,
-        act: () => (R.buyTreat(state, cat, p.id) ? toast(`${p.name}s now earn ×${fmt(cat.treat.mult ** (level + 1))}.`) : broke('seeds')),
+        act: () => (R.buyTreat(state, cat, p.id) ? bought(`${p.name}s now earn ×${fmt(cat.treat.mult ** (level + 1))}.`) : broke('seeds')),
       };
     });
   }
@@ -346,7 +520,7 @@ function entries() {
       const level = state.upgrades[u.id] || 0, cost = R.upgradePrice(u, level);
       return {
         icon: icons.feathers, name: u.name, desc: u.desc, wallet: 'feathers', cost, note: `Lv ${level}`,
-        act: () => cost !== undefined && (R.buyUpgrade(state, cat, u.id) ? toast(`${u.name} is now level ${level + 1}.`) : broke('feathers')),
+        act: () => cost !== undefined && (R.buyUpgrade(state, cat, u.id) ? bought(`${u.name} is now level ${level + 1}.`) : broke('feathers')),
       };
     }),
   ];
@@ -404,7 +578,7 @@ function select(i) {
   selected = i != null && state.cells[i] ? i : null;
   const c = selected != null && state.cells[selected], el = $('#info');
   if (!c) {
-    el.innerHTML = '<p class="hint">Tap a bird or garden piece to see what it earns and why. Drag pieces to rearrange them; moving is free.</p>';
+    el.innerHTML = '<p class="hint">Tap a bird to say hello and see what it earns and why. Drag pieces to rearrange them; moving is free.</p>';
     return;
   }
   const p = cat.piece[c.id];
@@ -444,11 +618,28 @@ function refreshInfo(ev) {
 
 function hud(ev) {
   $('#seeds').textContent = fmt(state.seeds);
-  $('#rate').textContent = `+${fmt(ev.total)}/s`;
+  $('#rate').textContent = `+${fmt(ev.total)}/s${state.frenzy > 0 ? ` · Frenzy ×${cat.frenzy.mult} ${Math.ceil(state.frenzy)}s` : ''}`;
+  $('#rate').classList.toggle('frenzy', state.frenzy > 0);
   $('#feathers').textContent = fmt(state.feathers);
   const waits = state.cells.flatMap((c, i) => (ev.cells[i].egg ? [(1 - (c.egg || 0)) / ev.cells[i].egg] : []));
   const nests = state.cells.some(c => c && cat.piece[c.id].incubate);
   $('#next').textContent = waits.length ? `next in ${fmtTime(Math.min(...waits))}` : nests ? 'nest is cold' : 'needs a Nest Box';
+}
+
+// Pay out a finished goal, then show the current one with a progress meter.
+function goals(ev) {
+  const done = R.claimGoal(state, cat, ev);
+  if (done) {
+    toast(`Goal complete: ${done.text}! ${rewardText(done.reward)}`);
+    sound('goal');
+    for (let k = 0; k < 16; k++) sparkle(Math.floor(Math.random() * N * N));
+  }
+  const g = cat.goals[state.goal], p = R.goalProgress(state, cat, ev);
+  const html = g
+    ? `<b>Goal ${state.goal + 1} of ${cat.goals.length}:</b> ${g.text} <span class="meter"><i style="width:${Math.min(100, (100 * p[0]) / p[1])}%"></i></span> `
+      + `${fmt(Math.min(p[0], p[1]))}/${fmt(p[1])} <span class="reward">${rewardText(g.reward)}</span>`
+    : '<b>Every goal complete!</b> Your grove is a wonder. Keep it growing.';
+  if (html !== goalHtml) $('#goal').innerHTML = goalHtml = html;
 }
 
 const birdsAround = (i, skip) => R.SHAPES.ring.filter(([dx, dy]) => {
@@ -496,13 +687,29 @@ function place(i) {
   if (!R.isOpen(state, cat, i)) return overgrown();
   if (state.cells[i]) return toast('That spot is taken. Drag pieces around to rearrange them.');
   if (!R.buy(state, cat, placing, i)) return broke(R.wallet(p));
-  if (p.kind === 'bird') play(state.cells[i], i, 'flap');
+  if (art[placing].flyA) animOf(state.cells[i]).fly = { t: 0, dx: -24 - Math.random() * 24, dy: -36 }; // swoops in from the upper left
   sparkle(i);
+  sound('buy');
   refreshShop();
   updateTip();
 }
 
+// Tapping a bird: it reacts, and once per cooldown it shakes loose a few seconds of its seeds.
+function touch(i) {
+  select(i);
+  const c = state.cells[i];
+  if (!c || cat.piece[c.id].kind !== 'bird') return;
+  const a = animOf(c), [x, y] = tileXY(i);
+  play(c, i, c.id === 'owl' ? 'hoot' : Math.random() < 0.5 ? 'sing' : 'hop');
+  sound(c.id === 'owl' ? 'hoot' : c.id === 'waxwing' ? 'trill' : 'chirp');
+  spawn(art.heart.idle, 1, k => [x + 5, y - 3 - 10 * k], true);
+  if (performance.now() < (a.tapReady || 0)) return;
+  a.tapReady = performance.now() + cat.tap.cooldown * 1000;
+  floatText(i, `+${fmt(R.tap(state, cat, i))}`);
+}
+
 view.addEventListener('pointerdown', e => {
+  if (overVisitor(e)) return catchVisitor();
   const i = tileAt(e);
   setHover(i);
   if (i == null) return;
@@ -518,7 +725,7 @@ view.addEventListener('pointerup', e => {
   if (!drag) return;
   const { from, moved } = drag, to = tileAt(e);
   drag = null;
-  if (!moved) select(from);
+  if (!moved) touch(from);
   else if (to != null && to !== from) R.move(state, cat, from, to) ? select(to) : overgrown();
   updateTip();
 });
@@ -540,14 +747,18 @@ view.addEventListener('keydown', e => {
     e.preventDefault();
     if (placing) place(hover);
     else if (selected != null && hover !== selected) R.move(state, cat, selected, hover) ? select(hover) : overgrown();
-    else select(state.cells[hover] ? hover : null);
+    else touch(hover);
   }
 });
 addEventListener('keydown', e => {
+  if ((e.key === 'c' || e.key === 'C') && visitor) catchVisitor();
   if (e.key !== 'Escape') return;
   setPlacing(null);
   select(null);
 });
+addEventListener('pointerdown', unlockAudio, true); // capture: runs before the grove's own handlers
+addEventListener('keydown', unlockAudio, true);
+$('#mute').addEventListener('click', () => setMuted(!muted));
 
 $('#stop').addEventListener('click', () => setPlacing(null));
 $('#tabs').addEventListener('click', e => {
@@ -573,10 +784,12 @@ function frame() {
   const anim = Math.min(dt, 0.25);
   state.cells.forEach((c, i) => c && tickAnim(c, i, anim));
   tickAnim(mascot, -1, anim);
+  tickVisitor(anim);
   render(anim);
   if (now - lastUi > 150) {
     lastUi = now;
     const ev = R.evaluate(state, cat);
+    goals(ev);
     hud(ev);
     refreshShop();
     refreshInfo(ev);
@@ -593,6 +806,7 @@ setInterval(save, 5000);
 document.addEventListener('visibilitychange', () => document.hidden && save());
 addEventListener('pagehide', save);
 fit();
+setMuted(muted);
 renderShop();
 select(null);
 if (!state.savedAt) toast('Welcome to Waxwing Grove! Pick a House Sparrow from the shop and place it in your grove.');

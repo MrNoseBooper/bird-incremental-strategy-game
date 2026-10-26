@@ -24,6 +24,14 @@ const cat = R.prepare({
     { id: 'thicket', costs: [3, 10], effect: 'size' },
     { id: 'sunny', cost: 2, growth: 2, effect: 'seeds', amount: 0.25 },
   ],
+  tap: { seconds: 3, min: 1, cooldown: 5 },
+  frenzy: { mult: 3, seconds: 30 },
+  visitor: { every: [60, 150], stay: 9, rewards: [{ kind: 'seeds', seconds: 90, min: 30, weight: 6 }, { kind: 'frenzy', weight: 3 }, { kind: 'feather', weight: 1 }] },
+  goals: [
+    { text: 'Own 2 sparrows', type: 'place', id: 'sparrow', need: 2, reward: { seeds: 10 } },
+    { text: 'Flock of 3 waxwings', type: 'flock', id: 'waxwing', need: 3, reward: { feathers: 1 } },
+    { text: 'Tap a bird', type: 'stat', stat: 'taps', need: 1, reward: { seeds: 5 } },
+  ],
 });
 
 // Build a grove from a little map, one letter per tile.
@@ -127,21 +135,72 @@ test('moving swaps pieces and previews report the change', () => {
   assert.equal(mult(s, 1, 0), 1.25);
 });
 
+test('tapping a bird shakes loose a few seconds of its seeds', () => {
+  const s = grove('ssf');
+  assert.equal(R.tap(s, cat, 0), 3.75);
+  assert.equal(R.tap(s, cat, 2), 0);
+  assert.equal(s.seeds, 103.75);
+  assert.equal(s.stats.taps, 1);
+});
+
+test('a frenzy multiplies income and ends exactly on time, even offline', () => {
+  const s = grove('s');
+  s.frenzy = 25;
+  assert.equal(R.evaluate(s, cat).total, 3);
+  R.advance(s, cat, 40);
+  assert.equal(s.frenzy, 0);
+  assert.equal(s.seeds, 100 + 25 * 3 + 15);
+});
+
+test('catching the visitor picks a reward by weight', () => {
+  const s = grove('s');
+  assert.deepEqual(R.catchVisitor(s, cat, 0), { kind: 'seeds', amount: 90 });
+  assert.deepEqual(R.catchVisitor(s, cat, 0.65), { kind: 'frenzy', amount: 3 });
+  assert.equal(s.frenzy, 30);
+  assert.deepEqual(R.catchVisitor(s, cat, 0.95), { kind: 'feather', amount: 1 });
+  assert.equal(s.feathers, 1);
+  assert.equal(s.stats.caught, 3);
+});
+
+test('goals track progress and pay out in order', () => {
+  const s = grove('s'), ev = () => R.evaluate(s, cat);
+  assert.deepEqual(R.goalProgress(s, cat, ev()), [1, 2]);
+  assert.equal(R.claimGoal(s, cat, ev()), null);
+  s.cells[1] = { id: 'sparrow' };
+  assert.equal(R.claimGoal(s, cat, ev()).text, 'Own 2 sparrows');
+  assert.equal(s.seeds, 110);
+  s.cells[6] = { id: 'waxwing' };
+  s.cells[7] = { id: 'waxwing' };
+  s.cells[14] = { id: 'waxwing' }; // diagonal, not part of the flock
+  assert.deepEqual(R.goalProgress(s, cat, ev()), [2, 3]);
+  s.cells[13] = { id: 'waxwing' };
+  assert.ok(R.claimGoal(s, cat, ev()));
+  assert.equal(s.feathers, 1);
+  R.tap(s, cat, 0);
+  assert.ok(R.claimGoal(s, cat, ev()));
+  assert.equal(R.goalProgress(s, cat, ev()), null);
+});
+
 test('saves round-trip and junk is dropped', () => {
   const s = grove('sw', '.t');
   s.seeds = 12.5;
   s.cells[7].age = 30;
   s.upgrades.sunny = 2;
+  Object.assign(s, { frenzy: 12, goal: 2, stats: { taps: 4, caught: 1, hatched: 3 } });
   const back = R.fromSave(JSON.parse(JSON.stringify(R.toSave(s, cat))), cat);
   assert.deepEqual(back, s);
 
   const junk = R.fromSave({
     seeds: -5, feathers: 'lots', upgrades: { thicket: 99 }, treats: { feeder: 3 },
+    frenzy: 1e9, goal: 99, stats: { taps: -3, caught: 2.7 },
     pieces: [{ id: 'dragon', x: 0, y: 0 }, { id: 'sparrow', x: 9, y: 0 }, { id: 'sparrow', x: 1.5, y: 0 }, null,
       { id: 'sparrow', x: 2, y: 2, age: -1 }, { id: 'robin', x: 2, y: 2 }],
   }, cat);
   assert.equal(junk.seeds, 0);
   assert.equal(junk.feathers, 0);
+  assert.equal(junk.frenzy, 30);
+  assert.equal(junk.goal, 3);
+  assert.deepEqual(junk.stats, { taps: 0, caught: 2, hatched: 0 });
   assert.deepEqual(junk.upgrades, { thicket: 2 });
   assert.deepEqual(junk.treats, {});
   assert.deepEqual(junk.cells.filter(Boolean), [{ id: 'sparrow', age: 0 }]);
@@ -159,4 +218,8 @@ test('real catalog: every piece has art and a packed grove gives finite income',
   const ev = R.evaluate(s, real);
   assert.ok(Number.isFinite(ev.total) && ev.total > 0);
   assert.ok(ev.cells.every(c => Number.isFinite(c.mult) && c.mult >= 0));
+  for (s.goal = 0; s.goal < real.goals.length; s.goal++) {
+    const [have, need] = R.goalProgress(s, real, ev);
+    assert.ok(Number.isFinite(have) && need > 0, real.goals[s.goal].text);
+  }
 });
