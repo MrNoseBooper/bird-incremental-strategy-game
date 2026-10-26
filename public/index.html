@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Waxwing Grove</title>
+  <meta name="description" content="A cozy pixel-art bird garden. Place birds, build flocks, and grow your grove.">
+  <meta name="theme-color" content="#2a1f2d">
+  <link rel="icon" href="data:,">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Jersey+10&display=swap">
+  <link rel="stylesheet" href="style.css">
+  <script type="module" src="game.js"></script>
+</head>
+<body>
+  <header>
+    <canvas id="mascot" width="18" height="21" aria-hidden="true"></canvas>
+    <h1>Waxwing Grove</h1>
+    <div class="wallets">
+      <div class="wallet" title="Seeds: your birds gather them every second">
+        <img data-icon="seeds" alt="Seeds"><b id="seeds">0</b><small id="rate"></small>
+      </div>
+      <div class="wallet gold" title="Golden Feathers: rare, hatched from Nest Boxes">
+        <img data-icon="feathers" alt="Golden Feathers"><b id="feathers">0</b><small id="next"></small>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section id="field">
+      <div id="placing" class="bar" hidden>Placing <b></b>: tap a tile. <button type="button" id="stop">Done</button></div>
+      <div id="grove-wrap">
+        <canvas id="grove" tabindex="0" aria-label="Your grove. Arrow keys move the cursor, Enter places, selects, or moves the selected piece."></canvas>
+        <div id="tip" hidden></div>
+      </div>
+      <p id="boot">Waking the birds…</p>
+    </section>
+
+    <aside>
+      <div class="panel">
+        <div id="tabs" role="tablist" aria-label="Shop">
+          <button type="button" role="tab" data-tab="birds" aria-selected="true">Birds</button>
+          <button type="button" role="tab" data-tab="garden" aria-selected="false">Garden</button>
+          <button type="button" role="tab" data-tab="treats" aria-selected="false">Treats</button>
+          <button type="button" role="tab" data-tab="golden" aria-selected="false">Golden</button>
+        </div>
+        <div id="shop"></div>
+      </div>
+      <div id="info" class="panel"></div>
+      <details class="panel" id="help">
+        <summary>How to play</summary>
+        <p>Your birds gather <b>seeds</b> every second, even while you're away (up to 12 hours). Spend them on more birds, garden pieces and treats.</p>
+        <p><b>Where you put things is everything.</b></p>
+        <ul>
+          <li>Sparrows love company. Robins want room.</li>
+          <li>Chickadees boost every other species around them.</li>
+          <li>Cardinals pair up. Goldfinches crave sunflowers.</li>
+          <li>Bohemian waxwings chain into great flocks and feast on fruiting rowan trees.</li>
+        </ul>
+        <p>Feeders, sunflowers and birdbaths boost birds near them. Pick something in the shop, then hover the grove: highlighted tiles show its reach, and the label shows the gain.</p>
+        <p><b>Golden Feathers</b> are rare. They hatch from Nest Boxes kept warm by the birds around them. Spend them in the Golden shop on a bigger grove and powerful upgrades.</p>
+        <p>Drag pieces to rearrange them for free. Keyboard: arrow keys move the cursor, Enter places, selects or moves, Esc cancels. Your grove saves automatically.</p>
+      </details>
+    </aside>
+  </main>
+
+  <div id="toasts" aria-live="polite"></div>
+</body>
+</html>
